@@ -1,0 +1,490 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stream Orders</title>
+<style>
+  :root{
+    --accent:#54D2FF;                 /* name + arrow */
+    --text:#EEF2F6;                   /* message text */
+    --bar-bg:rgba(12,14,18,.72);      /* the bar itself */
+    --line:rgba(255,255,255,.12);     /* hairline edges */
+    --bh: 64px;                       /* bar height */
+    --fs: calc(var(--bh) * 0.5);      /* text scales with the bar height */
+    --sans:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+    --mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; }
+  body{
+    background:transparent; overflow:hidden; user-select:none;
+    font-family:var(--sans); color:var(--text);
+    -webkit-font-smoothing:antialiased;
+  }
+  /* dark backdrop only when previewing locally (file://) or ?preview=1 */
+  .preview::before{
+    content:""; position:fixed; inset:0; z-index:-1;
+    background:
+      linear-gradient(180deg,#1b2735 0%,#0b1017 100%);
+  }
+
+  .bar{
+    position:fixed; left:0; right:0; height:var(--bh);
+    background:var(--bar-bg);
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+    box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
+    overflow:hidden;
+    display:flex; align-items:center;
+    opacity:0;                                   /* hidden until an order arrives */
+    transition:opacity .6s ease;
+  }
+  .bar.visible{ opacity:1; }
+  .bar.pos-bottom{ bottom:0; }
+  .bar.pos-top{ top:0; }
+  .bar.pos-center{ top:50%; transform:translateY(-50%); }
+  /* thin accent line along the top edge */
+  .bar::before{
+    content:""; position:absolute; left:0; right:0; top:0; height:2px;
+    background:linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent) 80%, transparent);
+    opacity:.6;
+  }
+
+  .track{
+    position:absolute; inset:0;
+    /* fade text in on the right, out on the left → "disappears slowly" */
+    -webkit-mask:linear-gradient(to right, transparent 0, #000 5%, #000 95%, transparent 100%);
+            mask:linear-gradient(to right, transparent 0, #000 5%, #000 95%, transparent 100%);
+  }
+  .item{
+    position:absolute; top:0; left:0; height:100%;
+    display:inline-flex; align-items:center; white-space:nowrap;
+    padding:0 1.15em; font-size:var(--fs); line-height:1;
+    will-change:transform;
+  }
+  .item .sep{ color:var(--accent); opacity:.55; margin-right:1.15em; font-size:.7em; transform:translateY(-.05em); }
+  .item .name{ color:var(--accent); font-weight:700; }
+  .item .arrow{ color:var(--accent); opacity:.7; margin:0 .45em; font-weight:400; }
+  .item .text{ color:var(--text); font-weight:600; }
+
+  /* ---------- Connection status ---------- */
+  .status{
+    position:fixed; right:10px; bottom:10px; z-index:10;
+    display:flex; align-items:center; gap:.5em;
+    font-family:var(--mono); font-size:12px; color:#8a94a2;
+    background:rgba(6,9,13,.6); padding:.25em .7em; border-radius:99px;
+    transition:opacity .5s ease;
+  }
+  .status.hide{ opacity:0; }
+  .dot{ width:.7em; height:.7em; border-radius:50%; background:#556; }
+  .dot.live{ background:#39d98a; box-shadow:0 0 8px #39d98a; }
+  .dot.connecting{ background:#ffb020; box-shadow:0 0 8px #ffb020; }
+  .dot.err{ background:#ff3b3b; box-shadow:0 0 8px #ff3b3b; }
+  .dot.test{ background:#7aa2ff; box-shadow:0 0 8px #7aa2ff; }
+
+  /* ---------- Settings ---------- */
+  .gear{
+    position:fixed; top:10px; right:10px; z-index:20;
+    width:34px; height:34px; border-radius:8px; cursor:pointer;
+    background:rgba(10,14,20,.6); color:#8a94a2; border:1px solid rgba(255,255,255,.1);
+    font-size:18px; line-height:1; opacity:0; transition:opacity .2s;
+  }
+  body:hover .gear{ opacity:.85; }
+  .gear:hover{ color:#fff; }
+
+  .panel{
+    position:fixed; top:0; right:0; z-index:30; height:100%;
+    width:min(340px,92vw); overflow-y:auto;
+    background:rgba(9,12,17,.98); border-left:1px solid rgba(255,255,255,.08);
+    box-shadow:-20px 0 50px rgba(0,0,0,.6);
+    transform:translateX(105%); transition:transform .28s cubic-bezier(.3,.8,.3,1);
+    padding:18px 18px 40px; color:#eef2f6; font-family:var(--sans);
+  }
+  .panel.open{ transform:none; }
+  .panel h2{ font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin:2px 0; }
+  .panel .sub{ color:#8a94a2; font-size:12px; margin:0 0 16px; }
+  .panel label{ display:block; font-size:12px; color:#8a94a2; margin:14px 0 5px; }
+  .panel input[type=text], .panel input[type=number], .panel select{
+    width:100%; padding:9px 10px; border-radius:8px; font-size:13px;
+    background:#11151c; border:1px solid rgba(255,255,255,.1); color:#eef2f6; font-family:var(--mono);
+  }
+  .panel input:focus, .panel select:focus{ outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
+  .row{ display:flex; gap:10px; } .row>div{ flex:1; }
+  .check{ display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; color:#eef2f6; }
+  .check input{ width:16px; height:16px; }
+  .btn{ display:block; width:100%; margin-top:12px; padding:11px; border-radius:9px; cursor:pointer;
+    letter-spacing:.08em; text-transform:uppercase; font-size:13px; font-weight:700; border:1px solid transparent; }
+  .btn.primary{ background:var(--accent); color:#03222e; }
+  .btn.primary:hover{ filter:brightness(1.08); }
+  .btn.ghost{ background:transparent; color:#eef2f6; border-color:rgba(255,255,255,.15); }
+  .btn.ghost:hover{ border-color:#fff; }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .pstatus{ margin-top:14px; font-size:12px; font-family:var(--mono); color:#8a94a2; line-height:1.5;
+    padding:10px; background:#11151c; border-radius:8px; border:1px solid rgba(255,255,255,.06); white-space:pre-wrap; }
+  .hint{ font-size:11px; color:#8a94a2; margin-top:6px; line-height:1.5; }
+  .hint code{ color:var(--accent); background:rgba(84,210,255,.1); padding:1px 4px; border-radius:4px; }
+</style>
+
+<div class="bar" id="bar"><div class="track" id="track"></div></div>
+
+<div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Idle</span></div>
+<button class="gear" id="gear" title="Settings (S)">&#9881;</button>
+
+<div class="panel" id="panel">
+  <h2>Stream Orders</h2>
+  <p class="sub">Scrolling channel-point ticker</p>
+
+  <label>Twitch Client ID</label>
+  <input type="text" id="f_clientId" autocomplete="off" spellcheck="false" />
+  <div class="hint">Reuse the same app as your other overlay — just add this page's URL to its redirect URLs.</div>
+
+  <label>Reward name to react to</label>
+  <input type="text" id="f_reward" autocomplete="off" />
+  <div class="hint">Matches any reward whose title contains this text. The reward must have <b>“Require viewer to enter text”</b> turned on.</div>
+
+  <div class="row">
+    <div><label>Speed (px/sec)</label><input type="number" id="f_speed" min="10" max="600" /></div>
+    <div><label>Bar height (px)</label><input type="number" id="f_height" min="20" max="400" /></div>
+  </div>
+  <div class="hint">Each order crosses the bar once, then the bar fades if nothing else is queued.</div>
+
+  <div class="row">
+    <div><label>Position</label>
+      <select id="f_pos">
+        <option value="bottom">Bottom</option>
+        <option value="top">Top</option>
+        <option value="center">Center</option>
+      </select></div>
+  </div>
+
+  <label>Max characters per order</label>
+  <input type="number" id="f_maxlen" min="10" max="500" />
+
+  <label class="check"><input type="checkbox" id="f_showname" /> Show submitter’s name</label>
+
+  <button class="btn primary" id="btn_connect">Connect to Twitch</button>
+  <button class="btn ghost" id="btn_test">Test order</button>
+  <button class="btn ghost" id="btn_reset">Clear bar</button>
+
+  <div class="pstatus" id="pstatus">Not connected.</div>
+  <div class="hint" style="margin-top:14px">Hotkeys: <code>T</code> test · <code>R</code> clear · <code>S</code> settings · <code>C</code> connect.<br>
+    Add this page to OBS as a <b>Browser Source</b> and size it to your bar strip (e.g. 1920 × 70).</div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- Config ----------
+  const DEFAULTS = {
+    clientId:"hr1s733kspfbjlw9olce8jc4my6v5x",
+    reward:"order",
+    speed:100,           // px per second
+    maxLen:200,
+    showName:true,
+    barHeight:64,        // px — the bar's height
+    position:"bottom",   // bottom | top | center
+    maxBuffer:40         // max orders waiting in the queue
+  };
+  const LS = { cfg:"order_cfg", token:"order_token", state:"order_oauth_state" };
+  const SCOPE = "channel:read:redemptions";
+  const SAMPLES = ["do a backflip","say hi to my cat","speak in a pirate voice for 1 min",
+    "drink some water","no looking at chat for 30s","spin the chair around","tell a dad joke"];
+
+  const params = new URLSearchParams(location.search);
+  const isFile = location.protocol === "file:";
+  const previewMode = isFile || params.has("preview");
+
+  function loadCfg(){
+    let c = { ...DEFAULTS };
+    try { Object.assign(c, JSON.parse(localStorage.getItem(LS.cfg) || "{}")); } catch(e){}
+    if (params.get("clientId")) c.clientId = params.get("clientId");
+    if (params.get("reward"))   c.reward   = params.get("reward");
+    if (params.get("speed"))    c.speed    = +params.get("speed");
+    if (params.get("maxlen"))   c.maxLen   = +params.get("maxlen");
+    if (params.get("height"))   c.barHeight = +params.get("height");
+    if (params.get("pos"))      c.position = params.get("pos");
+    if (params.get("name"))     c.showName = params.get("name") !== "0";
+    if (params.get("accent"))   document.documentElement.style.setProperty("--accent", "#"+params.get("accent").replace(/^#/,""));
+    return c;
+  }
+  const cfg = loadCfg();
+  function saveCfg(){ try{ localStorage.setItem(LS.cfg, JSON.stringify(cfg)); }catch(e){} }
+
+  // ---------- DOM ----------
+  const $ = id => document.getElementById(id);
+  const bar=$("bar"), track=$("track"),
+        statusEl=$("status"), dotEl=$("dot"), statusText=$("statusText"),
+        panel=$("panel"), gear=$("gear"), pstatus=$("pstatus");
+  if (previewMode) document.body.classList.add("preview");
+
+  function applyLayout(){
+    const h = Math.max(20, Math.min(400, +cfg.barHeight || 64));
+    document.documentElement.style.setProperty("--bh", h + "px");
+    const pos = ["top","bottom","center"].includes(cfg.position) ? cfg.position : "bottom";
+    bar.classList.remove("pos-top","pos-bottom","pos-center");
+    bar.classList.add("pos-" + pos);
+  }
+  applyLayout();
+
+  // ---------- Ticker ----------
+  let vw = window.innerWidth;
+  let trackX = 0;          // scroll offset (decreasing)
+  let cursor = vw;         // content-space x for the next item's left edge
+  let barVisible = false;
+  let testCount = 0;
+  let lastT = performance.now();
+  const queue = [];        // pending orders, each shown once, in order
+  const rendered = [];     // on-screen items {el,left,width}
+
+  window.addEventListener("resize", () => { vw = window.innerWidth; });
+
+  function addMessage(name, text){
+    text = String(text == null ? "" : text).slice(0, cfg.maxLen).trim();
+    if (!text) return;
+    queue.push({ name:String(name||"someone"), text });
+    while (queue.length > cfg.maxBuffer) queue.shift();
+  }
+  function clearAll(){
+    queue.length = 0;
+    for (const it of rendered) it.el.remove();
+    rendered.length = 0;
+    cursor = vw - trackX;     // restart entry from the right edge
+  }
+
+  function makeItem(msg){
+    const el = document.createElement("div");
+    el.className = "item";
+    const sep = document.createElement("span"); sep.className = "sep"; sep.textContent = "●";
+    el.appendChild(sep);
+    if (cfg.showName){
+      const n = document.createElement("span"); n.className="name"; n.textContent = msg.name; el.appendChild(n);
+      const a = document.createElement("span"); a.className="arrow"; a.textContent = "→"; el.appendChild(a);
+    }
+    const tx = document.createElement("span"); tx.className="text"; tx.textContent = msg.text; el.appendChild(tx);
+    track.appendChild(el);
+    return { el, left:0, width: el.offsetWidth || 10 };
+  }
+
+  function frame(t){
+    let dt = (t - lastT)/1000; lastT = t;
+    if (dt > 0.05) dt = 0.05;
+    trackX -= cfg.speed * dt;
+
+    // while idle the cursor can fall behind the scroll — keep the next entry at the right edge
+    if (cursor + trackX < vw) cursor = vw - trackX;
+
+    // pull queued orders onto the track as space opens up (each shown once)
+    let guard = 0;
+    while (queue.length && cursor + trackX < vw + 100 && guard++ < 50){
+      const item = makeItem(queue.shift());
+      item.left = cursor;
+      rendered.push(item);
+      cursor += item.width;
+    }
+
+    // position & cull
+    for (let i=rendered.length-1; i>=0; i--){
+      const it = rendered[i];
+      const x = it.left + trackX;
+      it.el.style.transform = "translateX(" + x.toFixed(1) + "px)";
+      if (x + it.width < -60){ it.el.remove(); rendered.splice(i,1); }
+    }
+
+    // visible while an order is queued or on-screen; fades out when the last one clears
+    const active = queue.length > 0 || rendered.length > 0;
+    if (active !== barVisible){ barVisible = active; bar.classList.toggle("visible", active); }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------- Status ----------
+  let hideTimer;
+  function setStatus(state, text){
+    dotEl.className = "dot" + (state ? " "+state : "");
+    statusText.textContent = text;
+    statusEl.classList.remove("hide");
+    clearTimeout(hideTimer);
+    if (state === "live") hideTimer = setTimeout(()=> statusEl.classList.add("hide"), 4000);
+  }
+  function setPStatus(t){ pstatus.textContent = t; }
+
+  // =====================================================================
+  //  Twitch EventSub (client-side, implicit OAuth)
+  // =====================================================================
+  let ws, sessionId, broadcaster, keepaliveWatch, retry = 0;
+  function redirectUri(){ return location.origin + location.pathname; }
+
+  function connect(){
+    if (isFile){
+      setStatus("err","Preview only — host the page");
+      setPStatus("Open as a local file. Twitch login needs a hosted URL (GitHub Pages or http://localhost). See README.");
+      return;
+    }
+    if (!cfg.clientId){ setStatus("err","Set Client ID first"); openPanel(true); return; }
+    if (!localStorage.getItem(LS.token)){ startOAuth(); return; }
+    openSocket();
+  }
+  function startOAuth(){
+    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem(LS.state, nonce);
+    location.href = "https://id.twitch.tv/oauth2/authorize"
+      + "?client_id=" + encodeURIComponent(cfg.clientId)
+      + "&redirect_uri=" + encodeURIComponent(redirectUri())
+      + "&response_type=token&scope=" + encodeURIComponent(SCOPE)
+      + "&state=" + encodeURIComponent(nonce);
+  }
+  function handleOAuthReturn(){
+    if (!location.hash || location.hash.indexOf("access_token") === -1) return false;
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (h.get("error")){ setStatus("err","Auth failed"); setPStatus("Twitch: "+(h.get("error_description")||h.get("error"))); cleanHash(); return true; }
+    if (h.get("state") && h.get("state") !== localStorage.getItem(LS.state)){ setStatus("err","Auth state mismatch"); cleanHash(); return true; }
+    localStorage.setItem(LS.token, h.get("access_token"));
+    localStorage.removeItem(LS.state);
+    cleanHash();
+    return true;
+  }
+  function cleanHash(){ history.replaceState(null, "", redirectUri() + location.search); }
+
+  async function helix(path, opts={}){
+    const token = localStorage.getItem(LS.token);
+    const res = await fetch("https://api.twitch.tv/helix/" + path, {
+      ...opts,
+      headers:{ "Authorization":"Bearer "+token, "Client-Id":cfg.clientId, "Content-Type":"application/json", ...(opts.headers||{}) }
+    });
+    if (res.status === 401){ tokenExpired(); throw new Error("401"); }
+    return res;
+  }
+  function tokenExpired(){
+    localStorage.removeItem(LS.token); closeSocket();
+    setStatus("err","Twitch session expired");
+    setPStatus("Login expired (~4h). Click Connect again. In OBS: right-click source → Interact → Connect.");
+  }
+  async function getBroadcaster(){
+    const res = await helix("users"); if (!res.ok) throw new Error("users "+res.status);
+    broadcaster = (await res.json()).data[0]; if (!broadcaster) throw new Error("no user");
+    return broadcaster;
+  }
+  async function subscribe(){
+    if (!broadcaster) await getBroadcaster();
+    const res = await helix("eventsub/subscriptions", { method:"POST", body: JSON.stringify({
+      type:"channel.channel_points_custom_reward_redemption.add", version:"1",
+      condition:{ broadcaster_user_id: broadcaster.id },
+      transport:{ method:"websocket", session_id: sessionId }
+    })});
+    if (res.ok){
+      retry = 0; setStatus("live","Live · "+broadcaster.display_name);
+      setPStatus("Connected as "+broadcaster.display_name+".\nReacting to rewards matching “"+(cfg.reward||"any")+"”.\nMake sure that reward requires viewer text input.");
+    } else {
+      const body = await res.text();
+      setStatus("err","Subscribe failed ("+res.status+")");
+      setPStatus(res.status===403
+        ? "Twitch refused (403): channel must be Affiliate/Partner, and the app's redirect URL must exactly match this page's URL."
+        : "Subscribe failed ("+res.status+"): "+body.slice(0,180));
+    }
+  }
+  function openSocket(url){
+    setStatus("connecting","Connecting…");
+    try { ws = new WebSocket(url || "wss://eventsub.wss.twitch.tv/ws"); }
+    catch(e){ setStatus("err","WebSocket error"); return; }
+    ws.onmessage = (ev) => {
+      let msg; try{ msg = JSON.parse(ev.data); }catch(e){ return; }
+      const type = msg.metadata && msg.metadata.message_type;
+      if (type === "session_welcome"){
+        sessionId = msg.payload.session.id;
+        armKeepalive(msg.payload.session.keepalive_timeout_seconds);
+        if (!url) subscribe().catch(e => { if (String(e.message)!=="401") setStatus("err","Setup error"); });
+        else setStatus("live", broadcaster ? "Live · "+broadcaster.display_name : "Live");
+      } else if (type === "session_keepalive"){ armKeepalive();
+      } else if (type === "notification"){
+        armKeepalive();
+        if (msg.metadata.subscription_type === "channel.channel_points_custom_reward_redemption.add") onRedemption(msg.payload.event);
+      } else if (type === "session_reconnect"){
+        const old = ws; if (old){ old.onclose = null; old.onerror = null; }
+        openSocket(msg.payload.session.reconnect_url);
+        try { old && old.close(); } catch(e){}
+      } else if (type === "revocation"){
+        setStatus("err","Subscription revoked"); setPStatus("Twitch revoked the subscription. Reconnect to fix.");
+      }
+    };
+    ws.onclose = () => {
+      clearTimeout(keepaliveWatch);
+      if (!localStorage.getItem(LS.token)) return;
+      const wait = Math.min(30000, 1000 * Math.pow(2, retry++));
+      setStatus("connecting","Reconnecting…");
+      setTimeout(() => openSocket(), wait);
+    };
+    ws.onerror = () => setStatus("err","Connection error");
+  }
+  function armKeepalive(sec){ clearTimeout(keepaliveWatch); keepaliveWatch = setTimeout(()=>{ try{ ws.close(); }catch(e){} }, ((sec||10)+5)*1000); }
+  function closeSocket(){ clearTimeout(keepaliveWatch); if (ws){ ws.onclose=null; ws.onerror=null; try{ ws.close(); }catch(e){} } }
+
+  function rewardMatches(title){
+    const want = (cfg.reward||"").trim().toLowerCase();
+    if (!want || want === "any") return true;
+    return String(title||"").toLowerCase().includes(want);
+  }
+  function onRedemption(ev){
+    if (!ev || !ev.reward) return;
+    if (!rewardMatches(ev.reward.title)) return;
+    addMessage(ev.user_name || ev.user_login || "someone", ev.user_input);
+  }
+  function disconnect(){
+    closeSocket(); localStorage.removeItem(LS.token); broadcaster = null;
+    setStatus("test","Disconnected"); setPStatus("Disconnected. Click Connect to sign in again.");
+  }
+
+  // =====================================================================
+  //  Settings + controls
+  // =====================================================================
+  const f = { clientId:$("f_clientId"), reward:$("f_reward"), speed:$("f_speed"),
+              maxlen:$("f_maxlen"), showname:$("f_showname"),
+              height:$("f_height"), pos:$("f_pos") };
+  function fillForm(){
+    f.clientId.value = cfg.clientId; f.reward.value = cfg.reward;
+    f.speed.value = cfg.speed;
+    f.maxlen.value = cfg.maxLen; f.showname.checked = cfg.showName;
+    f.height.value = cfg.barHeight; f.pos.value = cfg.position;
+  }
+  function readForm(){
+    const prevH = cfg.barHeight, prevName = cfg.showName;
+    cfg.clientId = f.clientId.value.trim();
+    cfg.reward = f.reward.value.trim();
+    cfg.speed = Math.max(10, Math.min(600, +f.speed.value || DEFAULTS.speed));
+    cfg.maxLen = Math.max(10, Math.min(500, +f.maxlen.value || DEFAULTS.maxLen));
+    cfg.showName = f.showname.checked;
+    cfg.barHeight = Math.max(20, Math.min(400, +f.height.value || DEFAULTS.barHeight));
+    cfg.position = f.pos.value;
+    applyLayout();
+    if (cfg.barHeight !== prevH || cfg.showName !== prevName) clearAll();
+    saveCfg();
+  }
+  Object.values(f).forEach(el => el.addEventListener("change", readForm));
+
+  function openPanel(open){ panel.classList.toggle("open", open === undefined ? !panel.classList.contains("open") : open); }
+  gear.addEventListener("click", () => openPanel());
+  $("btn_connect").addEventListener("click", () => { readForm(); connect(); });
+  $("btn_test").addEventListener("click", () => addMessage("TestViewer", SAMPLES[testCount++ % SAMPLES.length]));
+  $("btn_reset").addEventListener("click", clearAll);
+  $("btn_connect").disabled = isFile;
+  if (isFile) $("btn_connect").title = "Host the page to connect (see README)";
+
+  document.addEventListener("keydown", (e) => {
+    if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+    const k = e.key.toLowerCase();
+    if (k === "t") addMessage("TestViewer", SAMPLES[testCount++ % SAMPLES.length]);
+    else if (k === "r") clearAll();
+    else if (k === "s") openPanel();
+    else if (k === "c"){ readForm(); connect(); }
+  });
+
+  // ---------- Boot ----------
+  fillForm();
+  const returned = handleOAuthReturn();
+  if (returned && localStorage.getItem(LS.token)) openSocket();
+  else if (!isFile && cfg.clientId && localStorage.getItem(LS.token)) openSocket();
+  else {
+    setStatus(previewMode ? "test" : "", previewMode ? "Preview · press T" : "Idle");
+    if (previewMode) setPStatus("Preview mode. Press T (or Test order) to see the crawl.");
+  }
+})();
+</script>
