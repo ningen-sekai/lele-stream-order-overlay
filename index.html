@@ -142,11 +142,12 @@
 
   <div class="row">
     <div><label>Speed (px/sec)</label><input type="number" id="f_speed" min="10" max="600" /></div>
-    <div><label>Bar height (px)</label><input type="number" id="f_height" min="20" max="400" /></div>
+    <div><label>Keep on screen (min)</label><input type="number" id="f_keep" min="0.1" max="60" step="0.5" /></div>
   </div>
-  <div class="hint">Each order crosses the bar once, then the bar fades if nothing else is queued.</div>
+  <div class="hint">Each order keeps circling the bar for this long, then leaves. The bar hides when no orders are active.</div>
 
   <div class="row">
+    <div><label>Bar height (px)</label><input type="number" id="f_height" min="20" max="400" /></div>
     <div><label>Position</label>
       <select id="f_pos">
         <option value="bottom">Bottom</option>
@@ -178,11 +179,12 @@
     clientId:"fd346wfte9ovydipeso0wcb9waxet2",
     reward:"order",
     speed:100,           // px per second
+    keepSeconds:300,     // how long an order stays in rotation (~5 min)
     maxLen:200,
     showName:true,
     barHeight:64,        // px — the bar's height
     position:"bottom",   // bottom | top | center
-    maxBuffer:40         // max orders waiting in the queue
+    maxBuffer:40         // max orders held at once
   };
   const LS = { cfg:"order_cfg", token:"order_token", state:"order_oauth_state" };
   const SCOPE = "channel:read:redemptions";
@@ -199,6 +201,7 @@
     if (params.get("clientId")) c.clientId = params.get("clientId");
     if (params.get("reward"))   c.reward   = params.get("reward");
     if (params.get("speed"))    c.speed    = +params.get("speed");
+    if (params.get("keep"))     c.keepSeconds = +params.get("keep")*60;
     if (params.get("maxlen"))   c.maxLen   = +params.get("maxlen");
     if (params.get("height"))   c.barHeight = +params.get("height");
     if (params.get("pos"))      c.position = params.get("pos");
@@ -231,20 +234,24 @@
   let cursor = vw;         // content-space x for the next item's left edge
   let barVisible = false;
   let testCount = 0;
+  let cycleIdx = 0;
   let lastT = performance.now();
-  const queue = [];        // pending orders, each shown once, in order
+  const buffer = [];       // active orders {name,text,expireAt} — kept ~cfg.keepSeconds
   const rendered = [];     // on-screen items {el,left,width}
+
+  const itemGap = () => Math.max(60, cfg.barHeight * 1.5);   // gap between chained orders
+  const cycleGap = () => Math.max(vw * 0.45, 320);           // gap before the sequence repeats
 
   window.addEventListener("resize", () => { vw = window.innerWidth; });
 
   function addMessage(name, text){
     text = String(text == null ? "" : text).slice(0, cfg.maxLen).trim();
     if (!text) return;
-    queue.push({ name:String(name||"someone"), text });
-    while (queue.length > cfg.maxBuffer) queue.shift();
+    buffer.push({ name:String(name||"someone"), text, expireAt: performance.now() + cfg.keepSeconds*1000 });
+    while (buffer.length > cfg.maxBuffer) buffer.shift();
   }
   function clearAll(){
-    queue.length = 0;
+    buffer.length = 0;
     for (const it of rendered) it.el.remove();
     rendered.length = 0;
     cursor = vw - trackX;     // restart entry from the right edge
@@ -272,13 +279,18 @@
     // while idle the cursor can fall behind the scroll — keep the next entry at the right edge
     if (cursor + trackX < vw) cursor = vw - trackX;
 
-    // pull queued orders onto the track as space opens up (each shown once)
+    // feed active orders onto the track, cycling through them so each stays ~keepSeconds
     let guard = 0;
-    while (queue.length && cursor + trackX < vw + 100 && guard++ < 50){
-      const item = makeItem(queue.shift());
+    while (cursor + trackX < vw + 100 && guard++ < 50){
+      const now = performance.now();
+      for (let i=buffer.length-1; i>=0; i--) if (buffer[i].expireAt <= now) buffer.splice(i,1);
+      if (!buffer.length) break;
+      const idx = cycleIdx % buffer.length;
+      const item = makeItem(buffer[idx]);
+      cycleIdx++;
       item.left = cursor;
       rendered.push(item);
-      cursor += item.width;
+      cursor += item.width + (idx === buffer.length - 1 ? cycleGap() : itemGap());
     }
 
     // position & cull
@@ -289,8 +301,8 @@
       if (x + it.width < -60){ it.el.remove(); rendered.splice(i,1); }
     }
 
-    // visible while an order is queued or on-screen; fades out when the last one clears
-    const active = queue.length > 0 || rendered.length > 0;
+    // visible while an order is active or still on-screen; fades out when the window empties
+    const active = buffer.length > 0 || rendered.length > 0;
     if (active !== barVisible){ barVisible = active; bar.classList.toggle("visible", active); }
 
     requestAnimationFrame(frame);
@@ -437,11 +449,11 @@
   //  Settings + controls
   // =====================================================================
   const f = { clientId:$("f_clientId"), reward:$("f_reward"), speed:$("f_speed"),
-              maxlen:$("f_maxlen"), showname:$("f_showname"),
+              keep:$("f_keep"), maxlen:$("f_maxlen"), showname:$("f_showname"),
               height:$("f_height"), pos:$("f_pos") };
   function fillForm(){
     f.clientId.value = cfg.clientId; f.reward.value = cfg.reward;
-    f.speed.value = cfg.speed;
+    f.speed.value = cfg.speed; f.keep.value = +(cfg.keepSeconds/60).toFixed(2);
     f.maxlen.value = cfg.maxLen; f.showname.checked = cfg.showName;
     f.height.value = cfg.barHeight; f.pos.value = cfg.position;
   }
@@ -450,6 +462,7 @@
     cfg.clientId = f.clientId.value.trim();
     cfg.reward = f.reward.value.trim();
     cfg.speed = Math.max(10, Math.min(600, +f.speed.value || DEFAULTS.speed));
+    cfg.keepSeconds = Math.max(5, Math.min(3600, Math.round((+f.keep.value || 5) * 60)));
     cfg.maxLen = Math.max(10, Math.min(500, +f.maxlen.value || DEFAULTS.maxLen));
     cfg.showName = f.showname.checked;
     cfg.barHeight = Math.max(20, Math.min(400, +f.height.value || DEFAULTS.barHeight));

@@ -6,9 +6,10 @@ edges. Shows `Name → their text`.
 
 - One file, `index.html`. No build step.
 - **The bar is hidden until someone redeems**, fades in with their order, and fades
-  back out once nothing is left to show.
-- Each order crosses the bar **once**. Multiple redemptions chain one after another,
-  in order; when the last one clears, the bar fades away.
+  back out once no orders are active.
+- Each order **stays in rotation for ~5 minutes** (configurable), circling the bar so
+  the streamer has time to see it. Multiple active orders chain one after another;
+  when an order's time is up it leaves, and the bar hides once the last one expires.
 - Uses the **same Twitch app** as the Lost Meter overlay (Client ID is baked in).
 
 ## See it now (no setup)
@@ -41,6 +42,7 @@ index.html?reward=order&speed=100&name=1&accent=54D2FF
 | `clientId` | Twitch app Client ID | (baked in) |
 | `reward` | reward-title text to match (`any` = all) | `order` |
 | `speed` | crawl speed, px/sec | `100` |
+| `keep` | minutes an order stays in rotation | `5` |
 | `maxlen` | max characters shown per order | `200` |
 | `height` | bar height in px | `64` |
 | `pos` | bar position: `bottom`, `top`, `center` | `bottom` |
