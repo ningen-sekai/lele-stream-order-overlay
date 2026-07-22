@@ -202,6 +202,9 @@
   function loadCfg(){
     let c = { ...DEFAULTS };
     try { Object.assign(c, JSON.parse(localStorage.getItem(LS.cfg) || "{}")); } catch(e){}
+    // configs saved before b30ea69 shared the Lost Meter's app — both overlays subscribing
+    // to the same event on one app hits Twitch's 3-identical-subscriptions cap (429)
+    if (c.clientId === "hr1s733kspfbjlw9olce8jc4my6v5x") c.clientId = DEFAULTS.clientId;
     if (params.get("clientId")) c.clientId = params.get("clientId");
     if (params.get("reward"))   c.reward   = params.get("reward");
     if (params.get("speed"))    c.speed    = +params.get("speed");
