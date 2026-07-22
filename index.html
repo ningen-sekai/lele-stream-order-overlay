@@ -384,7 +384,7 @@
     broadcaster = (await res.json()).data[0]; if (!broadcaster) throw new Error("no user");
     return broadcaster;
   }
-  async function subscribe(){
+  async function subscribe(isRetry){
     if (!broadcaster) await getBroadcaster();
     const res = await helix("eventsub/subscriptions", { method:"POST", body: JSON.stringify({
       type:"channel.channel_points_custom_reward_redemption.add", version:"1",
@@ -394,6 +394,8 @@
     if (res.ok){
       retry = 0; setStatus("live","Live · "+broadcaster.display_name);
       setPStatus("Connected as "+broadcaster.display_name+".\nReacting to rewards matching “"+(cfg.reward||"any")+"”.\nMake sure that reward requires viewer text input.");
+    } else if (res.status === 429 && !isRetry && await dropStaleSubs()){
+      return subscribe(true);
     } else {
       const body = await res.text();
       setStatus("err","Subscribe failed ("+res.status+")");
@@ -401,6 +403,23 @@
         ? "Twitch refused (403): channel must be Affiliate/Partner, and the app's redirect URL must exactly match this page's URL."
         : "Subscribe failed ("+res.status+"): "+body.slice(0,180));
     }
+  }
+  // 429 = the app's 3-identical-subscriptions cap is full — free slots held by
+  // older/other sessions of this overlay (they get a revocation and can reconnect)
+  async function dropStaleSubs(){
+    try{
+      setStatus("connecting","Freeing slots…");
+      const res = await helix("eventsub/subscriptions?type=channel.channel_points_custom_reward_redemption.add");
+      if (!res.ok) return false;
+      const subs = (await res.json()).data || [];
+      let dropped = 0;
+      for (const s of subs){
+        if ((s.transport||{}).session_id === sessionId) continue;
+        const del = await helix("eventsub/subscriptions?id="+encodeURIComponent(s.id), { method:"DELETE" });
+        if (del.ok || del.status === 404) dropped++;
+      }
+      return dropped > 0;
+    }catch(e){ return false; }
   }
   function openSocket(url){
     setStatus("connecting","Connecting…");
