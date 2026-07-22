@@ -14,7 +14,7 @@ edges. Shows `Name → their text`.
 
 ## See it now (no setup)
 **Double-click `index.html`** → it opens in preview mode. Press **T** a few times to
-watch orders crawl across. Hotkeys: **T** test · **R** clear · **S** settings · **C** connect.
+watch orders crawl across. Hotkeys: **T** test · **R** clear · **C**/**S** settings · **L** connect.
 
 ## Connect it to Twitch
 1. **Reward:** in the streamer's Creator Dashboard, make a Channel-Points reward with
@@ -25,7 +25,7 @@ watch orders crawl across. Hotkeys: **T** test · **R** clear · **S** settings 
 3. **Add the redirect URL:** in your existing Twitch app at dev.twitch.tv/console,
    add this page's hosted URL to the app's **OAuth Redirect URLs** list (an app can
    have several). It must match the page URL exactly.
-4. Open the hosted page → **⚙ / press S** → confirm the reward filter → **Connect to
+4. Open the hosted page → **⚙ / press C** → confirm the reward filter → **Connect to
    Twitch** → the streamer logs in with their account → dot turns green.
 5. Add the same URL to OBS as a **Browser Source**. Make it **1920 × 1080** (full
    canvas) — the bar is a fixed-height strip that anchors itself (bottom by default;

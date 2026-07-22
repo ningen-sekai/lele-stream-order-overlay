@@ -121,12 +121,13 @@
     padding:10px; background:#11151c; border-radius:8px; border:1px solid rgba(255,255,255,.06); white-space:pre-wrap; }
   .hint{ font-size:11px; color:#8a94a2; margin-top:6px; line-height:1.5; }
   .hint code{ color:var(--accent); background:rgba(84,210,255,.1); padding:1px 4px; border-radius:4px; }
+  .hint a{ color:var(--accent); }
 </style>
 
 <div class="bar" id="bar"><div class="track" id="track"></div></div>
 
 <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Idle</span></div>
-<button class="gear" id="gear" title="Settings (S)">&#9881;</button>
+<button class="gear" id="gear" title="Settings (C)">&#9881;</button>
 
 <div class="panel" id="panel">
   <h2>Stream Orders</h2>
@@ -134,7 +135,8 @@
 
   <label>Twitch Client ID</label>
   <input type="text" id="f_clientId" autocomplete="off" spellcheck="false" />
-  <div class="hint">Reuse the same app as your other overlay — just add this page's URL to its redirect URLs.</div>
+  <div class="hint">Reuse the same app as your other overlay — just add this page's URL to its redirect URLs.
+    <a href="#" id="lnk_resetId">Reset to default</a></div>
 
   <label>Reward name to react to</label>
   <input type="text" id="f_reward" autocomplete="off" />
@@ -166,7 +168,7 @@
   <button class="btn ghost" id="btn_reset">Clear bar</button>
 
   <div class="pstatus" id="pstatus">Not connected.</div>
-  <div class="hint" style="margin-top:14px">Hotkeys: <code>T</code> test · <code>R</code> clear · <code>S</code> settings · <code>C</code> connect.<br>
+  <div class="hint" style="margin-top:14px">Hotkeys: <code>T</code> test · <code>R</code> clear · <code>C</code>/<code>S</code> settings · <code>L</code> connect.<br>
     Add this page to OBS as a <b>Browser Source</b> and size it to your bar strip (e.g. 1920 × 70).</div>
 </div>
 
@@ -187,6 +189,8 @@
     maxBuffer:40         // max orders held at once
   };
   const LS = { cfg:"order_cfg", token:"order_token", state:"order_oauth_state" };
+  // Twitch client IDs are ~30 lowercase alphanumerics; anything else would 400 at login
+  const validClientId = s => /^[a-z0-9]{20,40}$/.test(String(s||""));
   const SCOPE = "channel:read:redemptions";
   const SAMPLES = ["do a backflip","say hi to my cat","speak in a pirate voice for 1 min",
     "drink some water","no looking at chat for 30s","spin the chair around","tell a dad joke"];
@@ -207,6 +211,7 @@
     if (params.get("pos"))      c.position = params.get("pos");
     if (params.get("name"))     c.showName = params.get("name") !== "0";
     if (params.get("accent"))   document.documentElement.style.setProperty("--accent", "#"+params.get("accent").replace(/^#/,""));
+    if (!validClientId(c.clientId)) c.clientId = DEFAULTS.clientId;   // heal a mangled saved ID
     return c;
   }
   const cfg = loadCfg();
@@ -459,7 +464,9 @@
   }
   function readForm(){
     const prevH = cfg.barHeight, prevName = cfg.showName;
-    cfg.clientId = f.clientId.value.trim();
+    const id = f.clientId.value.trim();
+    cfg.clientId = validClientId(id) ? id : DEFAULTS.clientId;
+    if (id !== cfg.clientId) f.clientId.value = cfg.clientId;
     cfg.reward = f.reward.value.trim();
     cfg.speed = Math.max(10, Math.min(600, +f.speed.value || DEFAULTS.speed));
     cfg.keepSeconds = Math.max(5, Math.min(3600, Math.round((+f.keep.value || 5) * 60)));
@@ -475,6 +482,7 @@
 
   function openPanel(open){ panel.classList.toggle("open", open === undefined ? !panel.classList.contains("open") : open); }
   gear.addEventListener("click", () => openPanel());
+  $("lnk_resetId").addEventListener("click", (e) => { e.preventDefault(); f.clientId.value = DEFAULTS.clientId; readForm(); });
   $("btn_connect").addEventListener("click", () => { readForm(); connect(); });
   $("btn_test").addEventListener("click", () => addMessage("TestViewer", SAMPLES[testCount++ % SAMPLES.length]));
   $("btn_reset").addEventListener("click", clearAll);
@@ -486,8 +494,8 @@
     const k = e.key.toLowerCase();
     if (k === "t") addMessage("TestViewer", SAMPLES[testCount++ % SAMPLES.length]);
     else if (k === "r") clearAll();
-    else if (k === "s") openPanel();
-    else if (k === "c"){ readForm(); connect(); }
+    else if (k === "s" || k === "c") openPanel();
+    else if (k === "l"){ readForm(); connect(); }
   });
 
   // ---------- Boot ----------
